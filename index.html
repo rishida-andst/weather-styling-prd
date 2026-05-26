@@ -12,15 +12,27 @@
     <style>
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* ローディング用スピナーのアニメーション */
+        .spinner {
+            border: 4px solid rgba(226, 232, 240, 1);
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 3rem;
+            height: 3rem;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
-<body class="bg-slate-100 min-h-screen text-gray-800">
+<body class="bg-slate-100 min-h-screen text-gray-800 relative">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useCallback, useMemo } = React;
 
-        // ご指定の天気コードマッピング
         const WEATHER_MAP = {
             "0": { label: "対象外", emoji: "➖", color: "bg-gray-100 text-gray-600 border-gray-300" },
             "1": { label: "晴", emoji: "☀️", color: "bg-orange-50 text-orange-600 border-orange-200" },
@@ -74,11 +86,10 @@
         function App() {
             const [stylingData, setStylingData] = useState({});
             const [isDragging, setIsDragging] = useState(false);
+            const [isLoading, setIsLoading] = useState(false); // ★ローディング状態の管理を追加
             const [loadedFiles, setLoadedFiles] = useState([]);
-
-            // 新規追加：フィルターとソートの状態管理
-            const [filterWeather, setFilterWeather] = useState('ALL'); // ALL, 0, 1, 2, 3, 4
-            const [sortType, setSortType] = useState('id_asc'); // id_asc, id_desc, temp_desc, temp_asc
+            const [filterWeather, setFilterWeather] = useState('ALL'); 
+            const [sortType, setSortType] = useState('id_asc'); 
 
             const handleDrop = useCallback(async (e) => {
                 e.preventDefault();
@@ -87,69 +98,78 @@
                 const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'));
                 if (files.length === 0) return alert('CSVファイルをドロップしてください。');
 
-                setLoadedFiles(prev => [...new Set([...prev, ...files.map(f => f.name)])]);
-                const newData = { ...stylingData };
+                // ★ローディングUIを即座に表示させる
+                setIsLoading(true);
 
-                for (const file of files) {
-                    const text = await file.text();
-                    const rows = parseCSV(text);
-                    if (rows.length < 2) continue; 
+                // Reactの画面描画（スピナー表示）を優先させるため、重い処理を少しだけ遅らせる
+                setTimeout(async () => {
+                    try {
+                        setLoadedFiles(prev => [...new Set([...prev, ...files.map(f => f.name)])]);
+                        const newData = { ...stylingData };
 
-                    const header = rows[0].map(h => h.replace(/["']/g, "").trim().toLowerCase());
-                    const idIndex = header.findIndex(h => h.includes('item_id') || h.includes('styling_id'));
-                    if (idIndex === -1) continue;
+                        for (const file of files) {
+                            const text = await file.text();
+                            const rows = parseCSV(text);
+                            if (rows.length < 2) continue; 
 
-                    for (let i = 1; i < rows.length; i++) {
-                        const row = rows[i];
-                        if (row.length === 0 || !row[idIndex]) continue;
-                        
-                        const itemId = cleanId(row[idIndex]);
-                        if (!itemId) continue;
+                            const header = rows[0].map(h => h.replace(/["']/g, "").trim().toLowerCase());
+                            const idIndex = header.findIndex(h => h.includes('item_id') || h.includes('styling_id'));
+                            if (idIndex === -1) continue;
 
-                        if (!newData[itemId]) newData[itemId] = { id: itemId, weather_types: [] };
+                            for (let i = 1; i < rows.length; i++) {
+                                const row = rows[i];
+                                if (row.length === 0 || !row[idIndex]) continue;
+                                
+                                const itemId = cleanId(row[idIndex]);
+                                if (!itemId) continue;
 
-                        header.forEach((colName, colIdx) => {
-                            if (colIdx === idIndex) return;
-                            const val = row[colIdx] ? row[colIdx].replace(/["']/g, "").trim() : "";
-                            if (!val) return;
+                                if (!newData[itemId]) newData[itemId] = { id: itemId, weather_types: [] };
 
-                            if (colName.includes('max_temperature') || colName.includes('max_temp')) newData[itemId].max_temp = val;
-                            if (colName.includes('min_temperature') || colName.includes('min_temp')) newData[itemId].min_temp = val;
-                            if (colName.includes('weather_type') || colName.includes('weather_code')) {
-                                if (!newData[itemId].weather_types.includes(val)) {
-                                    newData[itemId].weather_types.push(val);
-                                }
+                                header.forEach((colName, colIdx) => {
+                                    if (colIdx === idIndex) return;
+                                    const val = row[colIdx] ? row[colIdx].replace(/["']/g, "").trim() : "";
+                                    if (!val) return;
+
+                                    if (colName.includes('max_temperature') || colName.includes('max_temp')) newData[itemId].max_temp = val;
+                                    if (colName.includes('min_temperature') || colName.includes('min_temp')) newData[itemId].min_temp = val;
+                                    if (colName.includes('weather_type') || colName.includes('weather_code')) {
+                                        if (!newData[itemId].weather_types.includes(val)) {
+                                            newData[itemId].weather_types.push(val);
+                                        }
+                                    }
+                                    if (colName.includes('weather_comment') || colName.includes('styling_comment') || colName.includes('style_comment')) {
+                                        newData[itemId].comment = val;
+                                    }
+                                    
+                                    if (colName.includes('image') || colName.includes('thumb')) newData[itemId].image_url = val;
+                                    if (colName.includes('category')) newData[itemId].category = val;
+                                    if (colName.includes('item_nm') || colName.includes('item_name') || colName.includes('item')) newData[itemId].items = val;
+                                });
                             }
-                            if (colName.includes('weather_comment') || colName.includes('styling_comment') || colName.includes('style_comment')) {
-                                newData[itemId].comment = val;
-                            }
-                            
-                            if (colName.includes('image') || colName.includes('thumb')) newData[itemId].image_url = val;
-                            if (colName.includes('category')) newData[itemId].category = val;
-                            if (colName.includes('item_nm') || colName.includes('item_name') || colName.includes('item')) newData[itemId].items = val;
-                        });
+                        }
+                        setStylingData(newData);
+                    } catch (error) {
+                        console.error("エラーが発生しました:", error);
+                        alert("ファイルの読み込み中にエラーが発生しました。");
+                    } finally {
+                        // ★処理が終わったらローディング画面を消す
+                        setIsLoading(false);
                     }
-                }
-                setStylingData(newData);
+                }, 50); // 50ミリ秒遅延させてUIレンダリングの隙間を作る
             }, [stylingData]);
 
-            // 表示用データの生成（フィルタリングとソートの適用）
             const processedData = useMemo(() => {
                 let data = Object.values(stylingData);
 
-                // 1. 天気でフィルタリング
                 if (filterWeather !== 'ALL') {
                     data = data.filter(item => {
-                        // 「0: 対象外」の処理（0が明示的に入っている、または天気情報が空の場合）
                         if (filterWeather === '0') {
                             return !item.weather_types || item.weather_types.length === 0 || item.weather_types.includes('0');
                         }
-                        // それ以外の天気
                         return item.weather_types && item.weather_types.includes(filterWeather);
                     });
                 }
 
-                // 2. ソートの適用
                 data.sort((a, b) => {
                     const idA = parseInt(a.id) || 0;
                     const idB = parseInt(b.id) || 0;
@@ -157,20 +177,17 @@
                     const tempB = b.max_temp !== undefined && b.max_temp !== '' ? parseFloat(b.max_temp) : null;
 
                     switch (sortType) {
-                        case 'id_asc':
-                            return idA - idB;
-                        case 'id_desc':
-                            return idB - idA;
-                        case 'temp_desc': // 最高気温 高い順 (nullは一番下)
+                        case 'id_asc': return idA - idB;
+                        case 'id_desc': return idB - idA;
+                        case 'temp_desc': 
                             if (tempA === null) return 1;
                             if (tempB === null) return -1;
                             return tempB - tempA;
-                        case 'temp_asc': // 最高気温 低い順 (nullは一番下)
+                        case 'temp_asc': 
                             if (tempA === null) return 1;
                             if (tempB === null) return -1;
                             return tempA - tempB;
-                        default:
-                            return 0;
+                        default: return 0;
                     }
                 });
 
@@ -183,6 +200,16 @@
 
             return (
                 <div className="max-w-7xl mx-auto p-6">
+                    
+                    {/* ★ ローディングオーバーレイ ★ */}
+                    {isLoading && (
+                        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center transition-all">
+                            <div className="spinner mb-4"></div>
+                            <h2 className="text-xl font-bold text-indigo-700">CSVデータを結合中...</h2>
+                            <p className="text-slate-500 text-sm mt-2 font-medium">データ量が多い場合、少し時間がかかります</p>
+                        </div>
+                    )}
+
                     <header className="flex justify-between items-center mb-6">
                         <div>
                             <h1 className="text-3xl font-bold text-slate-800">スタイル分析 精度検証ツール</h1>
@@ -211,10 +238,8 @@
                         </div>
                     ) : (
                         <div>
-                            {/* --- コントロールパネル（フィルター＆ソート） --- */}
+                            {/* コントロールパネル */}
                             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
-                                
-                                {/* 天気タブ（フィルター） */}
                                 <div className="flex flex-wrap gap-2">
                                     <button 
                                         onClick={() => setFilterWeather('ALL')}
@@ -233,7 +258,6 @@
                                     ))}
                                 </div>
 
-                                {/* ソート機能 */}
                                 <div className="flex items-center gap-2">
                                     <span className="text-sm font-bold text-slate-500">並び替え:</span>
                                     <select 
@@ -253,12 +277,11 @@
                                 <span className="font-bold">該当件数: </span> {processedData.length} 件
                             </div>
 
-                            {/* --- カード一覧 --- */}
+                            {/* カード一覧 */}
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                                 {processedData.map(item => (
-                                    <div key={item.id} className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200 flex flex-col">
+                                    <div key={item.id} className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200 flex flex-col hover:shadow-lg transition">
                                         
-                                        {/* スタイリング画像エリア */}
                                         <div className="bg-slate-200 w-full h-96 relative flex items-center justify-center border-b border-slate-100">
                                             {item.image_url ? (
                                                 <img src={item.image_url} alt="スタイリング画像" className="w-full h-full object-cover" />
@@ -270,9 +293,7 @@
                                             )}
                                         </div>
 
-                                        {/* 情報エリア */}
                                         <div className="p-5 flex-1 flex flex-col">
-                                            {/* IDとカテゴリ */}
                                             <div className="flex justify-between items-start mb-3">
                                                 <span className="text-xs text-slate-400 font-mono">ID: {item.id}</span>
                                                 {item.category && (
@@ -282,7 +303,6 @@
                                                 )}
                                             </div>
 
-                                            {/* 天気・気温 */}
                                             <div className="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
                                                 <div className="flex flex-wrap gap-1">
                                                     {item.weather_types && item.weather_types.length > 0 ? item.weather_types.map(w => {
@@ -312,7 +332,6 @@
                                                 </div>
                                             </div>
 
-                                            {/* AIスタイルひとこと */}
                                             <div className="mb-4">
                                                 <div className="text-xs font-bold text-slate-400 mb-1">AI スタイルひとこと</div>
                                                 <p className="text-sm text-slate-700 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 font-medium">
@@ -320,7 +339,6 @@
                                                 </p>
                                             </div>
 
-                                            {/* 使用アイテム名 */}
                                             <div className="mt-auto pt-4 border-t border-slate-100">
                                                 <div className="text-xs font-bold text-slate-400 mb-1">使用アイテム</div>
                                                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded border border-dashed border-slate-200 min-h-[40px]">
